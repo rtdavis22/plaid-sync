@@ -1,0 +1,38 @@
+name: Sync transactions
+
+on:
+  schedule:
+    # 12:00 UTC — 05:00 PT / 08:00 ET. GitHub runs cron in UTC and does not
+    # adjust for daylight saving, so this drifts by an hour twice a year.
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+
+# Never let a manual run overlap a scheduled one; both write the same table.
+concurrency:
+  group: sync-transactions
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # --full because runners are ephemeral: there is nowhere to persist a
+      # Plaid cursor between runs, so each run reconciles the whole window.
+      - run: npm run sync -- --full
+        env:
+          PLAID_CLIENT_ID: ${{ secrets.PLAID_CLIENT_ID }}
+          PLAID_SECRET: ${{ secrets.PLAID_SECRET }}
+          PLAID_ACCESS_TOKEN: ${{ secrets.PLAID_ACCESS_TOKEN }}
+          PLAID_ENV: production
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+          AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}

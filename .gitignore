@@ -1,0 +1,4 @@
+node_modules/
+.env
+.plaid-link-session.json
+.plaid-item.json
