@@ -1,0 +1,37 @@
+name: Read receipts
+
+on:
+  schedule:
+    # 12:30 UTC — half an hour after the sync, purely to avoid two runs
+    # contending for the same Airtable rate limit. Ordering does not matter:
+    # receipts only reads transactions that already exist.
+    - cron: "30 12 * * *"
+  workflow_dispatch:
+
+# Its own group, so a manual receipt run is not queued behind a sync. The two
+# never write the same fields — sync upserts transaction columns, this writes
+# Items plus Receipt Processed — so overlapping is safe.
+concurrency:
+  group: read-receipts
+  cancel-in-progress: false
+
+jobs:
+  receipts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # A no-op unless a receipt was attached since the last run.
+      - run: npm run receipts
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+          AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}

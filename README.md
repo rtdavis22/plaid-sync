@@ -122,12 +122,18 @@ like a right one once it is a row in the table.
 
 ## Scheduled runs
 
-`.github/workflows/sync.yml` runs `npm run sync -- --full` then `npm run receipts` daily at 12:00 UTC
-(05:00 PT / 08:00 ET), plus on demand via the Actions tab. It needs these repo
-secrets:
+Two workflows, each on its own schedule and each runnable on demand from the
+Actions tab.
 
-`PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ACCESS_TOKENS` (comma-separated, one
-per institution), `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID`, `ANTHROPIC_API_KEY`
+| Workflow | Runs | Secrets |
+| --- | --- | --- |
+| `sync.yml` | `npm run sync -- --full` at 12:00 UTC (05:00 PT) | `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ACCESS_TOKENS` (comma-separated, one per institution), `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID` |
+| `receipts.yml` | `npm run receipts` at 12:30 UTC | `ANTHROPIC_API_KEY`, `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID` |
+
+They are separate so a failed receipt does not mark the transaction sync red,
+and so either can be re-run alone. Ordering does not matter — the receipt
+reader only touches transactions that already exist — and they never write the
+same fields, so an overlap is harmless.
 
 CI uses `--full` because runners are ephemeral — there is nowhere to keep a
 cursor between runs, so each run re-reads the window and reconciles.
