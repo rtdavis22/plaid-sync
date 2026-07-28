@@ -2,6 +2,7 @@ import type { Transaction } from "plaid";
 import type { AirtableRecord } from "./airtable.js";
 import { deleteRecords, listAllRecords, listTables, upsertRecords } from "./airtable.js";
 import { reportAndExit } from "./plaid.js";
+import { categorize, loadRules, RULES_TABLE, type Rule } from "./rules.js";
 import { OVERRIDE_FIELD, TABLE_NAME } from "./setup-airtable.js";
 import { accountLabels, syncTransactions } from "./transactions.js";
 
@@ -26,8 +27,14 @@ function requireBaseId(): string {
   return baseId;
 }
 
-function toRecord(t: Transaction, labels: Map<string, string>, protectAmount: boolean) {
+function toRecord(
+  t: Transaction,
+  labels: Map<string, string>,
+  protectAmount: boolean,
+  rules: Rule[],
+) {
   const category = t.personal_finance_category;
+  const matched = categorize(t.name, t.merchant_name, rules);
   const fields: Record<string, unknown> = {
       Name: t.name,
       Date: t.date,
@@ -49,6 +56,11 @@ function toRecord(t: Transaction, labels: Map<string, string>, protectAmount: bo
   // writes the fields it is given. OVERRIDE_FIELD is never written here: it is
   // a human's marker, and sync only ever reads it.
   if (!protectAmount) fields[PROTECTED_FIELD] = t.amount;
+
+  // Only write Category when a rule actually matched. Writing a fallback would
+  // overwrite categories set by hand, and Plaid's taxonomy would pollute the
+  // curated single-select options.
+  if (matched) fields.Category = matched.category;
 
   return { fields };
 }
@@ -77,8 +89,11 @@ async function main() {
       .map((r) => r.fields[KEY_FIELD] as string),
   );
 
+  const rulesTable = tables.find((t) => t.name === RULES_TABLE);
+  const rules = rulesTable ? await loadRules(baseId, rulesTable.id) : [];
+
   const upserts = [...added, ...modified].map((t) =>
-    toRecord(t, labels, protectedIds.has(t.transaction_id)),
+    toRecord(t, labels, protectedIds.has(t.transaction_id), rules),
   );
   const { created, updated } = await upsertRecords(baseId, table.id, [KEY_FIELD], upserts);
 
@@ -89,6 +104,11 @@ async function main() {
   const held = upserts.length - upserts.filter((u) => PROTECTED_FIELD in u.fields).length;
   const note = held > 0 ? ` · ${PROTECTED_FIELD} held on ${held} (${OVERRIDE_FIELD} set)` : "";
   console.log(`created ${created} · updated ${updated} · deleted ${deleted}${note}`);
+
+  const matched = [...added, ...modified].filter((t) =>
+    categorize(t.name, t.merchant_name, rules),
+  ).length;
+  console.log(`${rules.length} rule(s) · matched ${matched}/${upserts.length}`);
 }
 
 /**

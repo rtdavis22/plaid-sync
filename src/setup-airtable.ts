@@ -1,4 +1,5 @@
 import { createField, createTable, listBases, listTables, renameField } from "./airtable.js";
+import { CATEGORY_FIELD, MATCH_FIELD, RULES_TABLE } from "./rules.js";
 
 export const TABLE_NAME = "Transactions";
 
@@ -21,6 +22,8 @@ const FIELDS = [
   { name: "Authorized Date", type: "date", options: { dateFormat: { name: "iso" } } },
   { name: "Amount", type: "currency", options: { precision: 2, symbol: "$" } },
   { name: "Account", type: "singleLineText" },
+  // Assigned by the rules table; falls back to Plaid's value when nothing matches.
+  { name: "Category", type: "singleLineText" },
   { name: "Category (Plaid)", type: "singleLineText" },
   { name: "Category Detail (Plaid)", type: "singleLineText" },
   { name: "Category Confidence (Plaid)", type: "singleLineText" },
@@ -60,6 +63,19 @@ async function main() {
   }
 
   const { tables } = await listTables(baseId);
+
+  if (!tables.some((t) => t.name === RULES_TABLE)) {
+    const rules = await createTable(baseId, {
+      name: RULES_TABLE,
+      description: "Substring → category. Longest matching Match Text wins.",
+      fields: [
+        { name: MATCH_FIELD, type: "singleLineText" },
+        { name: CATEGORY_FIELD, type: "singleLineText" },
+      ],
+    });
+    console.log(`Created table "${rules.name}" (${rules.id}).`);
+  }
+
   const table = tables.find((t) => t.name === TABLE_NAME);
 
   if (!table) {
