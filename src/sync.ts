@@ -3,7 +3,7 @@ import type { AirtableRecord } from "./airtable.js";
 import { deleteRecords, listAllRecords, listTables, upsertRecords } from "./airtable.js";
 import { reportAndExit } from "./plaid.js";
 import { OVERRIDE_FIELD, TABLE_NAME } from "./setup-airtable.js";
-import { cardLabels, syncTransactions } from "./transactions.js";
+import { accountLabels, syncTransactions } from "./transactions.js";
 
 const KEY_FIELD = "Transaction ID";
 
@@ -26,14 +26,14 @@ function requireBaseId(): string {
   return baseId;
 }
 
-function toRecord(t: Transaction, cards: Map<string, string>, protectAmount: boolean) {
+function toRecord(t: Transaction, labels: Map<string, string>, protectAmount: boolean) {
   const category = t.personal_finance_category;
   const fields: Record<string, unknown> = {
       Name: t.name,
       Date: t.date,
       // When the charge was authorized, vs Date which is when it posted.
       "Authorized Date": t.authorized_date ?? null,
-      Card: cards.get(t.account_id) ?? "unknown",
+      Account: labels.get(t.account_id) ?? "unknown",
       "Category (Plaid)": category?.primary ?? "",
       "Category Detail (Plaid)": category?.detailed ?? "",
       "Category Confidence (Plaid)": category?.confidence_level ?? "",
@@ -64,7 +64,7 @@ async function main() {
   }
 
   const { added, modified, removed } = await syncTransactions(full ? "full" : "incremental");
-  const cards = await cardLabels();
+  const labels = await accountLabels();
 
   // One read serves both the override lookup and the delete paths below.
   const hasOverride = table.fields.some((f) => f.name === OVERRIDE_FIELD);
@@ -78,7 +78,7 @@ async function main() {
   );
 
   const upserts = [...added, ...modified].map((t) =>
-    toRecord(t, cards, protectedIds.has(t.transaction_id)),
+    toRecord(t, labels, protectedIds.has(t.transaction_id)),
   );
   const { created, updated } = await upsertRecords(baseId, table.id, [KEY_FIELD], upserts);
 

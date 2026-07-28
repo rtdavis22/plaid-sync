@@ -20,7 +20,7 @@ const FIELDS = [
   { name: "Date", type: "date", options: { dateFormat: { name: "iso" } } },
   { name: "Authorized Date", type: "date", options: { dateFormat: { name: "iso" } } },
   { name: "Amount", type: "currency", options: { precision: 2, symbol: "$" } },
-  { name: "Card", type: "singleLineText" },
+  { name: "Account", type: "singleLineText" },
   { name: "Category (Plaid)", type: "singleLineText" },
   { name: "Category Detail (Plaid)", type: "singleLineText" },
   { name: "Category Confidence (Plaid)", type: "singleLineText" },
@@ -40,6 +40,8 @@ const RENAMES: Array<[from: string, to: string]> = [
   ["Category", "Category (Plaid)"],
   ["Merchant", "Merchant (Plaid)"],
   ["Override From", OVERRIDE_FIELD],
+  // Was card-only until a second institution was linked.
+  ["Card", "Account"],
 ];
 
 async function main() {

@@ -1,8 +1,8 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { addItem } from "./item.js";
 import { plaid, reportAndExit } from "./plaid.js";
 
 const SESSION_FILE = ".plaid-link-session.json";
-const ITEM_FILE = ".plaid-item.json";
 
 function readLinkToken(): string {
   const fromArg = process.argv[2];
@@ -28,27 +28,26 @@ async function main() {
 
   if (publicTokens.length === 0) {
     throw new Error(
-      "No completed Link session found yet. Finish the Chase flow in the browser, then re-run this.",
+      "No completed Link session found yet. Finish the flow in the browser, then re-run this.",
     );
   }
-  if (publicTokens.length > 1) {
-    console.warn(`Found ${publicTokens.length} linked items; exchanging the most recent.`);
+
+  for (const publicToken of publicTokens) {
+    const { data: exchanged } = await plaid.itemPublicTokenExchange({ public_token: publicToken });
+    const { isNew } = addItem({
+      access_token: exchanged.access_token,
+      item_id: exchanged.item_id,
+    });
+
+    const { data: accounts } = await plaid.accountsGet({ access_token: exchanged.access_token });
+    console.log(`${isNew ? "Linked" : "Re-linked"} ${accounts.item.institution_id ?? "institution"}:`);
+    for (const account of accounts.accounts) {
+      console.log(`  ${account.name} (${account.subtype}) ····${account.mask ?? "????"}`);
+    }
   }
 
-  const publicToken = publicTokens[publicTokens.length - 1];
-  const { data: exchanged } = await plaid.itemPublicTokenExchange({ public_token: publicToken });
-
-  writeFileSync(
-    ITEM_FILE,
-    JSON.stringify({ access_token: exchanged.access_token, item_id: exchanged.item_id }, null, 2),
-  );
-
-  const { data: accounts } = await plaid.accountsGet({ access_token: exchanged.access_token });
-  console.log(`Connected ${accounts.item.institution_id ?? "institution"}. Accounts:`);
-  for (const account of accounts.accounts) {
-    console.log(`  ${account.name} (${account.subtype}) ····${account.mask ?? "????"}`);
-  }
-  console.log(`\nAccess token saved to ${ITEM_FILE}. Keep it out of git.`);
+  console.log(`\nSaved to .plaid-items.json. Keep it out of git.`);
+  console.log('Run "npm run sync -- --full" to pull the new history.');
 }
 
 main().catch(reportAndExit);

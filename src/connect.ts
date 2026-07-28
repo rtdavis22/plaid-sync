@@ -27,10 +27,10 @@ async function main() {
     JSON.stringify({ link_token: data.link_token, expiration: data.expiration }, null, 2),
   );
 
-  console.log("Open this URL and connect your Chase card:\n");
+  console.log("Open this URL and connect an account:\n");
   console.log(`  ${data.hosted_link_url}\n`);
   console.log(`Link token saved to ${SESSION_FILE} (expires ${data.expiration}).`);
-  console.log("When Chase says the connection succeeded, run: npm run exchange");
+  console.log("Once the bank confirms the connection, run: npm run exchange");
 }
 
 main().catch(reportAndExit);
