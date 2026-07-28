@@ -16,15 +16,23 @@ function requireBaseId(): string {
 }
 
 function toRecord(t: Transaction, cards: Map<string, string>) {
+  const category = t.personal_finance_category;
   return {
     fields: {
       Name: t.name,
       Date: t.date,
+      // When the charge was authorized, vs Date which is when it posted.
+      "Authorized Date": t.authorized_date ?? null,
       Amount: t.amount,
       Card: cards.get(t.account_id) ?? "unknown",
-      Category: t.personal_finance_category?.primary ?? "",
+      "Category (Plaid)": category?.primary ?? "",
+      "Category Detail (Plaid)": category?.detailed ?? "",
+      "Category Confidence (Plaid)": category?.confidence_level ?? "",
+      "Payment Channel (Plaid)": t.payment_channel ?? "",
       Pending: t.pending,
-      Merchant: t.merchant_name ?? "",
+      "Merchant (Plaid)": t.merchant_name ?? "",
+      "Merchant Website (Plaid)": t.website ?? "",
+      "Merchant Logo (Plaid)": t.logo_url ?? "",
       [KEY_FIELD]: t.transaction_id,
     },
   };

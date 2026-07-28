@@ -39,6 +39,40 @@ Airtable writes are upserts keyed on `Transaction ID`, so re-running is
 idempotent. Deletions are real: when a pending charge posts, Plaid removes the
 pending transaction and adds a new one with a different ID.
 
+## Columns
+
+Columns holding Plaid's own inference or enrichment are suffixed `(Plaid)`.
+Unsuffixed columns are what the bank reported.
+
+| Column | Source | Fill |
+| --- | --- | --- |
+| Name | bank description | 100% |
+| Date | posted date | 100% |
+| Authorized Date | when the charge was authorized | 100% |
+| Amount | positive = purchase, negative = payment/refund | 100% |
+| Card | last four, derived from the account | 100% |
+| Category (Plaid) | Plaid's primary taxonomy, ~14 values | 100% |
+| Category Detail (Plaid) | e.g. `FOOD_AND_DRINK_FAST_FOOD` | 100% |
+| Category Confidence (Plaid) | `VERY_HIGH` … `LOW` | 100% |
+| Payment Channel (Plaid) | `in store` / `online` / `other` | 100% |
+| Pending | provisional; amount and merchant can change | — |
+| Merchant (Plaid) | cleaned merchant name | 95% |
+| Merchant Website (Plaid) | | 60% |
+| Merchant Logo (Plaid) | Plaid-hosted image URL | 60% |
+| Transaction ID | Plaid's id; the upsert key, never edit | 100% |
+
+Categories are **Plaid's**, not Chase's, and will not match the Chase app.
+About 28% of rows come back `LOW` confidence, so treat those as suggestions.
+Card payments land in `LOAN_DISBURSEMENTS`, which is intended, not a misfire.
+
+Fields deliberately omitted because Chase populates them poorly or not at all:
+`location.*` (~20%), `original_description`, `check_number`, `transaction_code`
+(0%), and `counterparties` (duplicates the merchant name).
+
+`npm run setup-airtable` is idempotent — it renames and adds columns to match
+the schema above, then leaves an already-correct table alone. After a schema
+change, run `npm run sync -- --full` to backfill.
+
 ## Scheduled runs
 
 `.github/workflows/sync.yml` runs `npm run sync -- --full` daily at 12:00 UTC

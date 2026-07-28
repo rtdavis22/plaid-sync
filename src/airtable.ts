@@ -34,8 +34,26 @@ export function listBases() {
   );
 }
 
+export type AirtableField = { id: string; name: string; type: string };
+export type AirtableTable = { id: string; name: string; fields: AirtableField[] };
+
 export function listTables(baseId: string) {
-  return request<{ tables: Array<{ id: string; name: string }> }>(`/meta/bases/${baseId}/tables`);
+  return request<{ tables: AirtableTable[] }>(`/meta/bases/${baseId}/tables`);
+}
+
+export function createField(baseId: string, tableId: string, body: unknown) {
+  return request<AirtableField>(`/meta/bases/${baseId}/tables/${tableId}/fields`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** Renaming preserves the field's data and id, so existing rows are untouched. */
+export function renameField(baseId: string, tableId: string, fieldId: string, name: string) {
+  return request<AirtableField>(`/meta/bases/${baseId}/tables/${tableId}/fields/${fieldId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
 }
 
 export function createTable(baseId: string, body: unknown) {

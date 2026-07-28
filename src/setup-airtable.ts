@@ -1,18 +1,36 @@
-import { createTable, listBases, listTables } from "./airtable.js";
+import { createField, createTable, listBases, listTables, renameField } from "./airtable.js";
 
 export const TABLE_NAME = "Transactions";
 
-/** Primary field first — Airtable makes field[0] the primary, and an opaque ID is a poor one. */
+/**
+ * Desired schema. Columns carrying Plaid's own inference or enrichment are
+ * suffixed "(Plaid)"; columns reporting what the bank sent are not.
+ *
+ * Primary field first — Airtable makes field[0] primary, and an opaque ID is a
+ * poor one. Order only matters when creating the table from scratch.
+ */
 const FIELDS = [
   { name: "Name", type: "singleLineText" },
   { name: "Date", type: "date", options: { dateFormat: { name: "iso" } } },
+  { name: "Authorized Date", type: "date", options: { dateFormat: { name: "iso" } } },
   { name: "Amount", type: "currency", options: { precision: 2, symbol: "$" } },
   { name: "Card", type: "singleLineText" },
-  { name: "Category", type: "singleLineText" },
+  { name: "Category (Plaid)", type: "singleLineText" },
+  { name: "Category Detail (Plaid)", type: "singleLineText" },
+  { name: "Category Confidence (Plaid)", type: "singleLineText" },
+  { name: "Payment Channel (Plaid)", type: "singleLineText" },
   { name: "Pending", type: "checkbox", options: { color: "yellowBright", icon: "check" } },
-  { name: "Merchant", type: "singleLineText" },
+  { name: "Merchant (Plaid)", type: "singleLineText" },
+  { name: "Merchant Website (Plaid)", type: "url" },
+  { name: "Merchant Logo (Plaid)", type: "url" },
   // The dedupe key for upserts. Never edit this column by hand.
   { name: "Transaction ID", type: "singleLineText" },
+];
+
+/** Applied before adding missing fields, so a rename isn't mistaken for a new column. */
+const RENAMES: Array<[from: string, to: string]> = [
+  ["Category", "Category (Plaid)"],
+  ["Merchant", "Merchant (Plaid)"],
 ];
 
 async function main() {
@@ -31,18 +49,45 @@ async function main() {
   }
 
   const { tables } = await listTables(baseId);
-  const existing = tables.find((t) => t.name === TABLE_NAME);
-  if (existing) {
-    console.log(`Table "${TABLE_NAME}" already exists (${existing.id}). Nothing to do.`);
+  const table = tables.find((t) => t.name === TABLE_NAME);
+
+  if (!table) {
+    const created = await createTable(baseId, {
+      name: TABLE_NAME,
+      description: "Credit card transactions synced from Plaid.",
+      fields: FIELDS,
+    });
+    console.log(`Created table "${created.name}" (${created.id}) with ${FIELDS.length} fields.`);
     return;
   }
 
-  const table = await createTable(baseId, {
-    name: TABLE_NAME,
-    description: "Credit card transactions synced from Plaid.",
-    fields: FIELDS,
-  });
-  console.log(`Created table "${table.name}" (${table.id}) in ${baseId}.`);
+  // Bring an existing table up to the current schema. Idempotent: re-running is a no-op.
+  const present = new Map(table.fields.map((f) => [f.name, f]));
+  let changed = 0;
+
+  for (const [from, to] of RENAMES) {
+    const field = present.get(from);
+    if (field && !present.has(to)) {
+      await renameField(baseId, table.id, field.id, to);
+      present.delete(from);
+      present.set(to, { ...field, name: to });
+      console.log(`renamed "${from}" → "${to}"`);
+      changed++;
+    }
+  }
+
+  for (const field of FIELDS) {
+    if (present.has(field.name)) continue;
+    await createField(baseId, table.id, field);
+    console.log(`added "${field.name}" (${field.type})`);
+    changed++;
+  }
+
+  console.log(
+    changed === 0
+      ? `Table "${TABLE_NAME}" (${table.id}) already matches the schema.`
+      : `Updated "${TABLE_NAME}" (${table.id}): ${changed} change(s). Run "npm run sync -- --full" to backfill.`,
+  );
 }
 
 // Only run when invoked directly — sync.ts imports TABLE_NAME from here.
