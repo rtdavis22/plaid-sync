@@ -45,8 +45,9 @@ function toRecord(t: Transaction, cards: Map<string, string>, protectAmount: boo
       [KEY_FIELD]: t.transaction_id,
   };
 
-  // Omitting the key leaves Airtable's existing value alone — an upsert only
-  // writes the fields it is given.
+  // Omitting Amount leaves the hand-corrected value alone — an upsert only
+  // writes the fields it is given. OVERRIDE_FIELD is never written here: it is
+  // a human's marker, and sync only ever reads it.
   if (!protectAmount) fields[PROTECTED_FIELD] = t.amount;
 
   return { fields };

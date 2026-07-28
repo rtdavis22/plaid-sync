@@ -2,8 +2,11 @@ import { createField, createTable, listBases, listTables, renameField } from "./
 
 export const TABLE_NAME = "Transactions";
 
-/** When set on a row, sync leaves that row's Amount alone. Hand-editable. */
-export const OVERRIDE_FIELD = "Override From";
+/**
+ * Set by hand only — sync reads it and never writes it. When a row has this
+ * set, sync leaves that row's Amount alone. Clear it to hand the row back.
+ */
+export const OVERRIDE_FIELD = "Overridden From";
 
 /**
  * Desired schema. Columns carrying Plaid's own inference or enrichment are
@@ -36,6 +39,7 @@ const FIELDS = [
 const RENAMES: Array<[from: string, to: string]> = [
   ["Category", "Category (Plaid)"],
   ["Merchant", "Merchant (Plaid)"],
+  ["Override From", OVERRIDE_FIELD],
 ];
 
 async function main() {
