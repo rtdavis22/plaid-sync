@@ -2,6 +2,9 @@ import { createField, createTable, listBases, listTables, renameField } from "./
 
 export const TABLE_NAME = "Transactions";
 
+/** When set on a row, sync leaves that row's Amount alone. Hand-editable. */
+export const OVERRIDE_FIELD = "Override From";
+
 /**
  * Desired schema. Columns carrying Plaid's own inference or enrichment are
  * suffixed "(Plaid)"; columns reporting what the bank sent are not.
@@ -23,6 +26,8 @@ const FIELDS = [
   { name: "Merchant (Plaid)", type: "singleLineText" },
   { name: "Merchant Website (Plaid)", type: "url" },
   { name: "Merchant Logo (Plaid)", type: "url" },
+  // Set this on a row to stop sync overwriting that row's Amount.
+  { name: OVERRIDE_FIELD, type: "currency", options: { precision: 2, symbol: "$" } },
   // The dedupe key for upserts. Never edit this column by hand.
   { name: "Transaction ID", type: "singleLineText" },
 ];

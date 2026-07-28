@@ -59,7 +59,16 @@ Unsuffixed columns are what the bank reported.
 | Merchant (Plaid) | cleaned merchant name | 95% |
 | Merchant Website (Plaid) | | 60% |
 | Merchant Logo (Plaid) | Plaid-hosted image URL | 60% |
+| Override From | set this to protect a hand-corrected Amount | manual |
 | Transaction ID | Plaid's id; the upsert key, never edit | 100% |
+
+### Correcting an amount
+
+Plaid sometimes reports a wrong amount. To fix one by hand, edit `Amount` and
+put the original Plaid value in `Override From`. Any row with `Override From`
+set keeps its `Amount` through every sync — the upsert simply omits that one
+field, so every other column still updates normally. Clear `Override From` to
+hand the row back to Plaid. Each run reports how many amounts it held.
 
 Categories are **Plaid's**, not Chase's, and will not match the Chase app.
 About 28% of rows come back `LOW` confidence, so treat those as suggestions.

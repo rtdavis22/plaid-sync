@@ -1,10 +1,21 @@
 import type { Transaction } from "plaid";
+import type { AirtableRecord } from "./airtable.js";
 import { deleteRecords, listAllRecords, listTables, upsertRecords } from "./airtable.js";
 import { reportAndExit } from "./plaid.js";
-import { TABLE_NAME } from "./setup-airtable.js";
+import { OVERRIDE_FIELD, TABLE_NAME } from "./setup-airtable.js";
 import { cardLabels, syncTransactions } from "./transactions.js";
 
 const KEY_FIELD = "Transaction ID";
+
+/** The one column the override protects. Everything else still syncs. */
+const PROTECTED_FIELD = "Amount";
+
+/** Airtable omits empty values entirely, so absence is the common case. */
+function isSet(value: unknown): boolean {
+  if (value === undefined || value === null || value === "" || value === false) return false;
+  if (Array.isArray(value)) return value.length === 0 ? false : true;
+  return true;
+}
 
 function requireBaseId(): string {
   const baseId = process.env.AIRTABLE_BASE_ID;
@@ -15,15 +26,13 @@ function requireBaseId(): string {
   return baseId;
 }
 
-function toRecord(t: Transaction, cards: Map<string, string>) {
+function toRecord(t: Transaction, cards: Map<string, string>, protectAmount: boolean) {
   const category = t.personal_finance_category;
-  return {
-    fields: {
+  const fields: Record<string, unknown> = {
       Name: t.name,
       Date: t.date,
       // When the charge was authorized, vs Date which is when it posted.
       "Authorized Date": t.authorized_date ?? null,
-      Amount: t.amount,
       Card: cards.get(t.account_id) ?? "unknown",
       "Category (Plaid)": category?.primary ?? "",
       "Category Detail (Plaid)": category?.detailed ?? "",
@@ -34,8 +43,13 @@ function toRecord(t: Transaction, cards: Map<string, string>) {
       "Merchant Website (Plaid)": t.website ?? "",
       "Merchant Logo (Plaid)": t.logo_url ?? "",
       [KEY_FIELD]: t.transaction_id,
-    },
   };
+
+  // Omitting the key leaves Airtable's existing value alone — an upsert only
+  // writes the fields it is given.
+  if (!protectAmount) fields[PROTECTED_FIELD] = t.amount;
+
+  return { fields };
 }
 
 async function main() {
@@ -51,14 +65,29 @@ async function main() {
   const { added, modified, removed } = await syncTransactions(full ? "full" : "incremental");
   const cards = await cardLabels();
 
-  const upserts = [...added, ...modified].map((t) => toRecord(t, cards));
+  // One read serves both the override lookup and the delete paths below.
+  const hasOverride = table.fields.some((f) => f.name === OVERRIDE_FIELD);
+  const columns = hasOverride ? [KEY_FIELD, OVERRIDE_FIELD] : [KEY_FIELD];
+  const existing = await listAllRecords(baseId, table.id, columns);
+
+  const protectedIds = new Set(
+    existing
+      .filter((r) => hasOverride && isSet(r.fields[OVERRIDE_FIELD]))
+      .map((r) => r.fields[KEY_FIELD] as string),
+  );
+
+  const upserts = [...added, ...modified].map((t) =>
+    toRecord(t, cards, protectedIds.has(t.transaction_id)),
+  );
   const { created, updated } = await upsertRecords(baseId, table.id, [KEY_FIELD], upserts);
 
   const deleted = full
-    ? await reconcile(baseId, table.id, added)
-    : await deleteByTransactionId(baseId, table.id, removed.map((r) => r.transaction_id));
+    ? await reconcile(baseId, table.id, existing, added)
+    : await deleteByTransactionId(baseId, table.id, existing, removed.map((r) => r.transaction_id));
 
-  console.log(`created ${created} · updated ${updated} · deleted ${deleted}`);
+  const held = upserts.length - upserts.filter((u) => PROTECTED_FIELD in u.fields).length;
+  const note = held > 0 ? ` · ${PROTECTED_FIELD} held on ${held} (${OVERRIDE_FIELD} set)` : "";
+  console.log(`created ${created} · updated ${updated} · deleted ${deleted}${note}`);
 }
 
 /**
@@ -66,14 +95,19 @@ async function main() {
  * So drop any synced row Plaid no longer knows about. Rows with a blank key were
  * added by hand in Airtable and are never touched.
  */
-async function reconcile(baseId: string, tableId: string, current: Transaction[]) {
+async function reconcile(
+  baseId: string,
+  tableId: string,
+  existing: AirtableRecord[],
+  current: Transaction[],
+) {
   if (current.length === 0) {
     // Deleting every row because an API hiccup returned nothing is unrecoverable.
     console.warn("Plaid returned no transactions; skipping reconcile rather than emptying the table.");
     return 0;
   }
   const live = new Set(current.map((t) => t.transaction_id));
-  const stale = (await listAllRecords(baseId, tableId, [KEY_FIELD]))
+  const stale = existing
     .filter((r) => {
       const key = r.fields[KEY_FIELD];
       return typeof key === "string" && key.length > 0 && !live.has(key);
@@ -82,14 +116,14 @@ async function reconcile(baseId: string, tableId: string, current: Transaction[]
   return stale.length > 0 ? deleteRecords(baseId, tableId, stale) : 0;
 }
 
-async function deleteByTransactionId(baseId: string, tableId: string, transactionIds: string[]) {
+async function deleteByTransactionId(
+  baseId: string,
+  tableId: string,
+  existing: AirtableRecord[],
+  transactionIds: string[],
+) {
   if (transactionIds.length === 0) return 0;
-  const byKey = new Map(
-    (await listAllRecords(baseId, tableId, [KEY_FIELD])).map((r) => [
-      r.fields[KEY_FIELD] as string,
-      r.id,
-    ]),
-  );
+  const byKey = new Map(existing.map((r) => [r.fields[KEY_FIELD] as string, r.id]));
   const recordIds = transactionIds
     .map((id) => byKey.get(id))
     .filter((id): id is string => Boolean(id));
