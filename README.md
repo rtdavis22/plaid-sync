@@ -39,6 +39,26 @@ Airtable writes are upserts keyed on `Transaction ID`, so re-running is
 idempotent. Deletions are real: when a pending charge posts, Plaid removes the
 pending transaction and adds a new one with a different ID.
 
+## Scheduled runs
+
+`.github/workflows/sync.yml` runs `npm run sync -- --full` daily at 12:00 UTC
+(05:00 PT / 08:00 ET), plus on demand via the Actions tab. It needs these repo
+secrets:
+
+`PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ACCESS_TOKEN`, `AIRTABLE_TOKEN`,
+`AIRTABLE_BASE_ID`
+
+CI uses `--full` because runners are ephemeral — there is nowhere to keep a
+cursor between runs, so each run re-reads the window and reconciles.
+
+GitHub cron is UTC and ignores daylight saving, so the local run time shifts by
+an hour twice a year. A failed run sends an email; a Plaid Item that needs
+re-authentication will surface that way.
+
+`.npmrc` pins the public registry. Installing from a machine configured against
+a private npm proxy otherwise writes proxy URLs into the lockfile, and `npm ci`
+fails in CI with a 401.
+
 ## Notes
 
 - **Amount sign** follows Plaid's convention: on a credit card, a positive
