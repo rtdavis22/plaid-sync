@@ -8,25 +8,16 @@ import {
   updateRecords,
   type AirtableRecord,
 } from "./airtable.js";
-import { CATEGORIES_TABLE, CATEGORY_FIELD, NAME_FIELD } from "./categories.js";
+import {
+  ITEM_COST_FIELD,
+  ITEM_NAME_FIELD,
+  ITEMS_LINK_FIELD,
+  ITEMS_TABLE,
+  ITEMS_TRANSACTION_FIELD,
+} from "./receipts-schema.js";
 import { PROCESSED_FIELD, TABLE_NAME } from "./setup-airtable.js";
 
-/** Only receipts on transactions in this category are read. */
-const GROCERY_CATEGORY = "Groceries";
-
-/**
- * Category names carry a sort prefix ("05-Groceries") so linked-record groups
- * order the way you want. Strip it before matching, so renumbering is safe.
- */
-function categoryName(raw: unknown): string {
-  return String(raw ?? "")
-    .replace(/^\s*\d+\s*[-–—.)]\s*/, "")
-    .trim()
-    .toLowerCase();
-}
-const ITEMS_TABLE = "Grocery Items";
 const RECEIPT_FIELD = "Receipt";
-const ITEMS_LINK_FIELD = "Grocery Items";
 
 /** Anything else (HEIC, TIFF) is skipped rather than sent and rejected. */
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
@@ -150,37 +141,25 @@ async function main() {
 
   const { tables } = await listTables(baseId);
   const transactions = tables.find((t) => t.name === TABLE_NAME);
-  const categories = tables.find((t) => t.name === CATEGORIES_TABLE);
   const items = tables.find((t) => t.name === ITEMS_TABLE);
-  if (!transactions || !categories || !items) {
-    throw new Error(`Need "${TABLE_NAME}", "${CATEGORIES_TABLE}" and "${ITEMS_TABLE}" in ${baseId}.`);
+  if (!transactions || !items) {
+    throw new Error(`Need "${TABLE_NAME}" and "${ITEMS_TABLE}" in ${baseId}. Run "npm run setup-airtable".`);
   }
   if (!transactions.fields.some((f) => f.name === PROCESSED_FIELD)) {
     throw new Error(`No "${PROCESSED_FIELD}" column. Run "npm run setup-airtable" first.`);
-  }
-
-  const groceryIds = new Set(
-    (await listAllRecords(baseId, categories.id, [NAME_FIELD]))
-      .filter((r) => categoryName(r.fields[NAME_FIELD]) === GROCERY_CATEGORY.toLowerCase())
-      .map((r) => r.id),
-  );
-  if (groceryIds.size === 0) {
-    throw new Error(`No "${GROCERY_CATEGORY}" row in ${CATEGORIES_TABLE}.`);
   }
 
   const rows = await listAllRecords(baseId, transactions.id, [
     "Name",
     "Date",
     "Amount",
-    CATEGORY_FIELD,
     RECEIPT_FIELD,
     PROCESSED_FIELD,
     ITEMS_LINK_FIELD,
   ]);
 
+  // Any category — a receipt is a receipt.
   const pending = rows.filter((r) => {
-    const linked = (r.fields[CATEGORY_FIELD] as string[] | undefined) ?? [];
-    if (!linked.some((id) => groceryIds.has(id))) return false;
     const attachments = attachmentsOf(r);
     if (attachments.length === 0) return false;
     return r.fields[PROCESSED_FIELD] !== receiptKey(attachments);
@@ -220,7 +199,11 @@ async function main() {
         baseId,
         items.id,
         result.items.map((item) => ({
-          fields: { Name: item.name, Cost: item.cost, Transaction: [row.id] },
+          fields: {
+            [ITEM_NAME_FIELD]: item.name,
+            [ITEM_COST_FIELD]: item.cost,
+            [ITEMS_TRANSACTION_FIELD]: [row.id],
+          },
         })),
       );
       await updateRecords(baseId, transactions.id, [

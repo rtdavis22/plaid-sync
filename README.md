@@ -1,6 +1,7 @@
 # plaid-sync
 
-Syncs Chase credit card transactions into Airtable via Plaid.
+Syncs bank and credit card transactions into Airtable via Plaid, across any
+number of linked institutions.
 
 ## Setup
 
@@ -27,11 +28,11 @@ Grant the token access to the base you want to sync into.
 | `npm run transactions` | Prints a transaction sync to stdout. Debugging only — **advances the cursor**. |
 | `npm run setup-airtable` | Lists bases, or creates the `Transactions` table once `AIRTABLE_BASE_ID` is set. |
 | `npm run sync` | The real thing: Plaid → Airtable. Safe to run repeatedly. |
-| `npm run receipts` | Reads grocery receipts into `Grocery Items`. `-- --dry-run` extracts without writing. |
+| `npm run receipts` | Reads receipts into `Items`. `-- --dry-run` extracts without writing. |
 
 ## How it works
 
-`/transactions/sync` returns changes since a cursor, stored in `.plaid-item.json`.
+`/transactions/sync` returns changes since a cursor, stored per item in `.plaid-items.json`.
 The first run has no cursor and returns full history; later runs return only
 what changed. The cursor is only persisted after every page is drained, so an
 interruption replays the batch rather than skipping it.
@@ -51,7 +52,8 @@ Unsuffixed columns are what the bank reported.
 | Date | posted date | 100% |
 | Authorized Date | when the charge was authorized | 100% |
 | Amount | positive = purchase, negative = payment/refund | 100% |
-| Card | last four, derived from the account | 100% |
+| Account | institution and last four, e.g. `Chase ····0195` | 100% |
+| Category | your category, linked to the `Categories` table | rules |
 | Category (Plaid) | Plaid's primary taxonomy, ~14 values | 100% |
 | Category Detail (Plaid) | e.g. `FOOD_AND_DRINK_FAST_FOOD` | 100% |
 | Category Confidence (Plaid) | `VERY_HIGH` … `LOW` | 100% |
@@ -60,6 +62,9 @@ Unsuffixed columns are what the bank reported.
 | Merchant (Plaid) | cleaned merchant name | 95% |
 | Merchant Website (Plaid) | | 60% |
 | Merchant Logo (Plaid) | Plaid-hosted image URL | 60% |
+| Receipt | attach a photo or PDF to have its line items extracted | manual |
+| Receipt Processed | which attachment was read; written by the reader | auto |
+| Items | link to the extracted receipt lines | auto |
 | Overridden From | set by hand to protect a corrected Amount | manual |
 | Transaction ID | Plaid's id; the upsert key, never edit | 100% |
 
@@ -74,7 +79,8 @@ From` to hand the row back to Plaid.
 Sync **only reads** this column, never writes it. Each run reports how many
 amounts it held.
 
-Categories are **Plaid's**, not Chase's, and will not match the Chase app.
+`Category (Plaid)` is **Plaid's** taxonomy, not the bank's, and will not match
+what the bank's own app shows.
 About 28% of rows come back `LOW` confidence, so treat those as suggestions.
 Card payments land in `LOAN_DISBURSEMENTS`, which is intended, not a misfire.
 
@@ -86,12 +92,13 @@ Fields deliberately omitted because Chase populates them poorly or not at all:
 the schema above, then leaves an already-correct table alone. After a schema
 change, run `npm run sync -- --full` to backfill.
 
-## Reading grocery receipts
+## Reading receipts
 
-Attach a photo or PDF to `Receipt` on a transaction categorised Groceries, then
-run `npm run receipts`. It sends the image to Claude, extracts the line items,
-and writes one `Grocery Items` row per line, linked back to the transaction.
-Needs `ANTHROPIC_API_KEY`; roughly 2–4¢ per receipt.
+Attach a photo or PDF to `Receipt` on any transaction, then run
+`npm run receipts`. It sends the image to Claude, extracts the line items, and
+writes one `Items` row per line, linked back to the transaction. Category does
+not matter — a receipt is a receipt. Needs `ANTHROPIC_API_KEY`; roughly 2–4¢
+per receipt.
 
 `-- --dry-run` prints what it would extract without writing anything. Use it
 first on an unfamiliar receipt.
@@ -105,17 +112,14 @@ Each receipt's total is checked against the charged amount and a gap over 2¢ is
 reported. OCR misreads a digit occasionally, and a wrong price looks exactly
 like a right one once it is a row in the table.
 
-Category matching ignores a leading sort prefix, so `05-Groceries` and
-`Groceries` both work.
-
 ## Scheduled runs
 
-`.github/workflows/sync.yml` runs `npm run sync -- --full` daily at 12:00 UTC
+`.github/workflows/sync.yml` runs `npm run sync -- --full` then `npm run receipts` daily at 12:00 UTC
 (05:00 PT / 08:00 ET), plus on demand via the Actions tab. It needs these repo
 secrets:
 
-`PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ACCESS_TOKEN`, `AIRTABLE_TOKEN`,
-`AIRTABLE_BASE_ID`
+`PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ACCESS_TOKENS` (comma-separated, one
+per institution), `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID`, `ANTHROPIC_API_KEY`
 
 CI uses `--full` because runners are ephemeral — there is nowhere to keep a
 cursor between runs, so each run re-reads the window and reconciles.
@@ -134,10 +138,10 @@ fails in CI with a 401.
   amount is a purchase and a negative amount is a payment or refund.
 - **Pending rows change.** A pending charge's merchant name and amount are
   provisional; both can shift when it posts.
-- `.plaid-item.json` holds a long-lived access token to real financial data.
+- `.plaid-items.json` holds long-lived access tokens to real financial data.
   It is gitignored. Treat it like a password.
 
 ## Resetting
 
-To re-import full history, delete the `cursor` key from `.plaid-item.json`.
+To re-import full history, delete the `cursor` key from `.plaid-items.json`.
 Existing Airtable rows will be updated in place rather than duplicated.

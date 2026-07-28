@@ -41,6 +41,14 @@ export function listTables(baseId: string) {
   return request<{ tables: AirtableTable[] }>(`/meta/bases/${baseId}/tables`);
 }
 
+/** Renaming preserves the table's id and every record in it. */
+export function renameTable(baseId: string, tableId: string, name: string) {
+  return request<AirtableTable>(`/meta/bases/${baseId}/tables/${tableId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
 export function createField(baseId: string, tableId: string, body: unknown) {
   return request<AirtableField>(`/meta/bases/${baseId}/tables/${tableId}/fields`, {
     method: "POST",

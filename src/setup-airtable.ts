@@ -1,5 +1,19 @@
-import { createField, createTable, listBases, listTables, renameField } from "./airtable.js";
+import {
+  createField,
+  createTable,
+  listBases,
+  listTables,
+  renameField,
+  renameTable,
+} from "./airtable.js";
 import { CATEGORIES_TABLE, CATEGORY_FIELD, MERCHANTS_FIELD, NAME_FIELD } from "./categories.js";
+import {
+  ITEM_COST_FIELD,
+  ITEM_NAME_FIELD,
+  ITEMS_LINK_FIELD,
+  ITEMS_TABLE,
+  ITEMS_TRANSACTION_FIELD,
+} from "./receipts-schema.js";
 
 export const TABLE_NAME = "Transactions";
 
@@ -10,7 +24,7 @@ export const TABLE_NAME = "Transactions";
 export const OVERRIDE_FIELD = "Overridden From";
 
 /**
- * Which receipt attachment has already been read into Grocery Items. Written by
+ * Which receipt attachment has already been read into Items. Written by
  * `npm run receipts`; swapping in a different photo makes it re-read.
  */
 export const PROCESSED_FIELD = "Receipt Processed";
@@ -57,7 +71,12 @@ const RENAMES: Array<[from: string, to: string]> = [
   ["Override From", OVERRIDE_FIELD],
   // Was card-only until a second institution was linked.
   ["Card", "Account"],
+  // Receipts are read for every category now, not just groceries.
+  ["Grocery Items", ITEMS_LINK_FIELD],
 ];
+
+/** Applied before anything looks a table up by name. */
+const TABLE_RENAMES: Array<[from: string, to: string]> = [["Grocery Items", ITEMS_TABLE]];
 
 async function main() {
   const baseId = process.env.AIRTABLE_BASE_ID;
@@ -75,6 +94,16 @@ async function main() {
   }
 
   const { tables } = await listTables(baseId);
+
+  // Before any lookup by name, so a rename is not mistaken for a missing table.
+  for (const [from, to] of TABLE_RENAMES) {
+    const stale = tables.find((t) => t.name === from);
+    if (stale && !tables.some((t) => t.name === to)) {
+      await renameTable(baseId, stale.id, to);
+      stale.name = to;
+      console.log(`renamed table "${from}" → "${to}"`);
+    }
+  }
 
   // Categories must exist first: the Category column links to it.
   let categories = tables.find((t) => t.name === CATEGORIES_TABLE);
@@ -101,6 +130,7 @@ async function main() {
       fields: FIELDS,
     });
     console.log(`Created table "${created.name}" (${created.id}) with ${FIELDS.length} fields.`);
+    await ensureItems(baseId, tables, created.id);
     return;
   }
 
@@ -131,6 +161,31 @@ async function main() {
       ? `Table "${TABLE_NAME}" (${table.id}) already matches the schema.`
       : `Updated "${TABLE_NAME}" (${table.id}): ${changed} change(s). Run "npm run sync -- --full" to backfill.`,
   );
+
+  await ensureItems(baseId, tables, table.id);
+}
+
+/** Receipt line items. Created last, since it links back to Transactions. */
+async function ensureItems(
+  baseId: string,
+  tables: Array<{ name: string }>,
+  transactionsTableId: string,
+) {
+  if (tables.some((t) => t.name === ITEMS_TABLE)) return;
+  const created = await createTable(baseId, {
+    name: ITEMS_TABLE,
+    description: "One row per line on a receipt, linked to its transaction.",
+    fields: [
+      { name: ITEM_NAME_FIELD, type: "singleLineText" },
+      { name: ITEM_COST_FIELD, type: "currency", options: { precision: 2, symbol: "$" } },
+      {
+        name: ITEMS_TRANSACTION_FIELD,
+        type: "multipleRecordLinks",
+        options: { linkedTableId: transactionsTableId },
+      },
+    ],
+  });
+  console.log(`Created table "${created.name}" (${created.id}).`);
 }
 
 // Only run when invoked directly — sync.ts imports TABLE_NAME from here.
