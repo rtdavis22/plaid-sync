@@ -10,6 +10,7 @@ import {
 } from "./airtable.js";
 import {
   ITEM_COST_FIELD,
+  ITEM_DESCRIPTION_FIELD,
   ITEM_NAME_FIELD,
   ITEMS_LINK_FIELD,
   ITEMS_TABLE,
@@ -25,7 +26,7 @@ const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp
 type Attachment = { id: string; url: string; filename: string; type: string };
 
 type Extraction = {
-  items: Array<{ name: string; cost: number }>;
+  items: Array<{ name: string; description: string; cost: number }>;
   subtotal: number | null;
   tax: number | null;
   total: number | null;
@@ -42,9 +43,13 @@ const SCHEMA = {
         type: "object",
         properties: {
           name: { type: "string", description: "The line item exactly as printed on the receipt." },
+          description: {
+            type: "string",
+            description: "The same item in plain English, abbreviations expanded.",
+          },
           cost: { type: "number", description: "Price actually charged, after any line discount." },
         },
-        required: ["name", "cost"],
+        required: ["name", "description", "cost"],
         additionalProperties: false,
       },
     },
@@ -58,7 +63,17 @@ const SCHEMA = {
 
 const PROMPT = `Extract every purchased line item from this receipt.
 
-Transcribe names exactly as printed, abbreviations and all — do not expand or tidy them.
+For each item give two forms of the name:
+
+- "name": exactly as printed, abbreviations and all. Do not expand or tidy it.
+- "description": the same item in plain English — expand the abbreviations into the
+  product a person would recognise. "SIG TACO SHLLS YLW" is "Signature Select Yellow
+  Taco Shells"; "BH VT YLW CHDR CHS" is "Vermont Yellow Cheddar Cheese". Keep it to a
+  product name, not a sentence, and do not add detail the receipt does not support —
+  no invented brands, sizes, or quantities. Where an abbreviation is genuinely unclear,
+  expand only the part you are confident about and leave the rest as printed; a
+  description close to the original is better than a confident guess.
+
 Record the price actually charged for each item, so apply any per-item discount.
 Exclude subtotal, tax, total, change, and loyalty lines from items; report subtotal, tax,
 and total in their own fields, or null if the receipt does not show them.
@@ -179,7 +194,7 @@ async function main() {
 
       console.log(`${label} — ${result.items.length} items, ${money(sum)} of ${money(charged)}`);
       for (const item of result.items) {
-        console.log(`    ${money(item.cost).padStart(9)}  ${item.name}`);
+        console.log(`    ${money(item.cost).padStart(9)}  ${item.name.padEnd(22)} ${item.description}`);
       }
 
       // Tax and rounding mean this rarely matches to the cent; a large gap
@@ -201,6 +216,7 @@ async function main() {
         result.items.map((item) => ({
           fields: {
             [ITEM_NAME_FIELD]: item.name,
+            [ITEM_DESCRIPTION_FIELD]: item.description,
             [ITEM_COST_FIELD]: item.cost,
             [ITEMS_TRANSACTION_FIELD]: [row.id],
           },

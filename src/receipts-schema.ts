@@ -11,5 +11,8 @@ export const ITEMS_TABLE = "Items";
 export const ITEMS_LINK_FIELD = "Items";
 export const ITEMS_TRANSACTION_FIELD = "Transaction";
 
+/** Exactly as printed on the receipt — the audit trail. */
 export const ITEM_NAME_FIELD = "Name";
+/** The same item in plain English, abbreviations expanded. */
+export const ITEM_DESCRIPTION_FIELD = "Description";
 export const ITEM_COST_FIELD = "Cost";

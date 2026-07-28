@@ -5,10 +5,12 @@ import {
   listTables,
   renameField,
   renameTable,
+  type AirtableTable,
 } from "./airtable.js";
 import { CATEGORIES_TABLE, CATEGORY_FIELD, MERCHANTS_FIELD, NAME_FIELD } from "./categories.js";
 import {
   ITEM_COST_FIELD,
+  ITEM_DESCRIPTION_FIELD,
   ITEM_NAME_FIELD,
   ITEMS_LINK_FIELD,
   ITEMS_TABLE,
@@ -165,27 +167,42 @@ async function main() {
   await ensureItems(baseId, tables, table.id);
 }
 
-/** Receipt line items. Created last, since it links back to Transactions. */
+const itemFields = (transactionsTableId: string) => [
+  { name: ITEM_NAME_FIELD, type: "singleLineText" },
+  { name: ITEM_DESCRIPTION_FIELD, type: "singleLineText" },
+  { name: ITEM_COST_FIELD, type: "currency", options: { precision: 2, symbol: "$" } },
+  {
+    name: ITEMS_TRANSACTION_FIELD,
+    type: "multipleRecordLinks",
+    options: { linkedTableId: transactionsTableId },
+  },
+];
+
+/** Receipt line items. Handled last, since it links back to Transactions. */
 async function ensureItems(
   baseId: string,
-  tables: Array<{ name: string }>,
+  tables: AirtableTable[],
   transactionsTableId: string,
 ) {
-  if (tables.some((t) => t.name === ITEMS_TABLE)) return;
-  const created = await createTable(baseId, {
-    name: ITEMS_TABLE,
-    description: "One row per line on a receipt, linked to its transaction.",
-    fields: [
-      { name: ITEM_NAME_FIELD, type: "singleLineText" },
-      { name: ITEM_COST_FIELD, type: "currency", options: { precision: 2, symbol: "$" } },
-      {
-        name: ITEMS_TRANSACTION_FIELD,
-        type: "multipleRecordLinks",
-        options: { linkedTableId: transactionsTableId },
-      },
-    ],
-  });
-  console.log(`Created table "${created.name}" (${created.id}).`);
+  const fields = itemFields(transactionsTableId);
+  const existing = tables.find((t) => t.name === ITEMS_TABLE);
+
+  if (!existing) {
+    const created = await createTable(baseId, {
+      name: ITEMS_TABLE,
+      description: "One row per line on a receipt, linked to its transaction.",
+      fields,
+    });
+    console.log(`Created table "${created.name}" (${created.id}) with ${fields.length} fields.`);
+    return;
+  }
+
+  const present = new Set(existing.fields.map((f) => f.name));
+  for (const field of fields) {
+    if (present.has(field.name)) continue;
+    await createField(baseId, existing.id, field);
+    console.log(`added "${field.name}" (${field.type}) to ${ITEMS_TABLE}`);
+  }
 }
 
 // Only run when invoked directly — sync.ts imports TABLE_NAME from here.

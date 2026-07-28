@@ -100,6 +100,14 @@ writes one `Items` row per line, linked back to the transaction. Category does
 not matter — a receipt is a receipt. Needs `ANTHROPIC_API_KEY`; roughly 2–4¢
 per receipt.
 
+Each item is written twice: `Name` is the receipt's literal text
+(`SIG TACO SHLLS YLW`) and `Description` is the model's plain-English reading
+(`Signature Select Yellow Taco Shells`). Keeping both means the transcription
+stays auditable — the description involves judgement, and a wrong expansion is
+only visible if the printed original is still there next to it. Expanding a
+store abbreviation into a brand is an inference; spot-check `Description`
+before relying on it, and treat `Name` as the ground truth.
+
 `-- --dry-run` prints what it would extract without writing anything. Use it
 first on an unfamiliar receipt.
 
