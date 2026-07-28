@@ -10,6 +10,12 @@ export const TABLE_NAME = "Transactions";
 export const OVERRIDE_FIELD = "Overridden From";
 
 /**
+ * Which receipt attachment has already been read into Grocery Items. Written by
+ * `npm run receipts`; swapping in a different photo makes it re-read.
+ */
+export const PROCESSED_FIELD = "Receipt Processed";
+
+/**
  * Desired schema. Columns carrying Plaid's own inference or enrichment are
  * suffixed "(Plaid)"; columns reporting what the bank sent are not.
  *
@@ -38,6 +44,8 @@ const fieldsFor = (categoriesTableId: string) => [
   { name: "Merchant Logo (Plaid)", type: "url" },
   // Set this on a row to stop sync overwriting that row's Amount.
   { name: OVERRIDE_FIELD, type: "currency", options: { precision: 2, symbol: "$" } },
+  // Written by the receipt reader. Never edit this column by hand.
+  { name: PROCESSED_FIELD, type: "singleLineText" },
   // The dedupe key for upserts. Never edit this column by hand.
   { name: "Transaction ID", type: "singleLineText" },
 ];

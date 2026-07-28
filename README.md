@@ -27,6 +27,7 @@ Grant the token access to the base you want to sync into.
 | `npm run transactions` | Prints a transaction sync to stdout. Debugging only — **advances the cursor**. |
 | `npm run setup-airtable` | Lists bases, or creates the `Transactions` table once `AIRTABLE_BASE_ID` is set. |
 | `npm run sync` | The real thing: Plaid → Airtable. Safe to run repeatedly. |
+| `npm run receipts` | Reads grocery receipts into `Grocery Items`. `-- --dry-run` extracts without writing. |
 
 ## How it works
 
@@ -84,6 +85,28 @@ Fields deliberately omitted because Chase populates them poorly or not at all:
 `npm run setup-airtable` is idempotent — it renames and adds columns to match
 the schema above, then leaves an already-correct table alone. After a schema
 change, run `npm run sync -- --full` to backfill.
+
+## Reading grocery receipts
+
+Attach a photo or PDF to `Receipt` on a transaction categorised Groceries, then
+run `npm run receipts`. It sends the image to Claude, extracts the line items,
+and writes one `Grocery Items` row per line, linked back to the transaction.
+Needs `ANTHROPIC_API_KEY`; roughly 2–4¢ per receipt.
+
+`-- --dry-run` prints what it would extract without writing anything. Use it
+first on an unfamiliar receipt.
+
+A receipt is read once. `Receipt Processed` records which attachment was used,
+so swapping in a clearer photo re-reads it — deleting the previous items first —
+while a re-run over an unchanged receipt does nothing. Several images on one
+transaction are read together as a single multi-page receipt.
+
+Each receipt's total is checked against the charged amount and a gap over 2¢ is
+reported. OCR misreads a digit occasionally, and a wrong price looks exactly
+like a right one once it is a row in the table.
+
+Category matching ignores a leading sort prefix, so `05-Groceries` and
+`Groceries` both work.
 
 ## Scheduled runs
 

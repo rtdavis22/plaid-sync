@@ -116,6 +116,35 @@ export async function upsertRecords(
   return { created, updated };
 }
 
+export async function createRecords(
+  baseId: string,
+  tableId: string,
+  records: Array<{ fields: Record<string, unknown> }>,
+) {
+  const created: AirtableRecord[] = [];
+  for (const batch of chunk(records, 10)) {
+    const result = await request<{ records: AirtableRecord[] }>(`/${baseId}/${tableId}`, {
+      method: "POST",
+      body: JSON.stringify({ records: batch, typecast: true }),
+    });
+    created.push(...result.records);
+  }
+  return created;
+}
+
+export async function updateRecords(
+  baseId: string,
+  tableId: string,
+  records: Array<{ id: string; fields: Record<string, unknown> }>,
+) {
+  for (const batch of chunk(records, 10)) {
+    await request(`/${baseId}/${tableId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ records: batch, typecast: true }),
+    });
+  }
+}
+
 export async function deleteRecords(baseId: string, tableId: string, recordIds: string[]) {
   let deleted = 0;
   for (const batch of chunk(recordIds, 10)) {

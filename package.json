@@ -9,10 +9,12 @@
     "transactions": "tsx src/transactions.ts",
     "setup-airtable": "tsx src/setup-airtable.ts",
     "sync": "tsx src/sync.ts",
+    "receipts": "tsx src/receipts.ts",
     "typecheck": "tsc --noEmit"
   },
   "license": "ISC",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "dotenv": "^17.4.2",
     "plaid": "^43.0.0"
   },
