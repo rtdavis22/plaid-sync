@@ -198,10 +198,15 @@ async function main() {
       }
 
       // Tax and rounding mean this rarely matches to the cent; a large gap
-      // means misread digits or missed lines, which is worth a human look.
+      // means misread digits, missed lines, or a discount applied at payment.
+      // Logged on stdout, and labelled: stderr interleaves unpredictably in CI,
+      // which can print a warning next to the wrong receipt.
       const expected = result.total ?? charged;
       if (Math.abs(expected - charged) > 0.02) {
-        console.warn(`  ⚠ receipt total ${money(expected)} ≠ charged ${money(charged)}`);
+        console.log(
+          `  ⚠ ${label}: receipt total ${money(expected)} ≠ charged ${money(charged)}` +
+            ` (${money(expected - charged)} difference)`,
+        );
       }
 
       if (dryRun) continue;
