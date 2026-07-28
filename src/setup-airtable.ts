@@ -1,5 +1,5 @@
 import { createField, createTable, listBases, listTables, renameField } from "./airtable.js";
-import { CATEGORY_FIELD, MATCH_FIELD, RULES_TABLE } from "./rules.js";
+import { CATEGORIES_TABLE, CATEGORY_FIELD, MERCHANTS_FIELD, NAME_FIELD } from "./categories.js";
 
 export const TABLE_NAME = "Transactions";
 
@@ -16,14 +16,18 @@ export const OVERRIDE_FIELD = "Overridden From";
  * Primary field first — Airtable makes field[0] primary, and an opaque ID is a
  * poor one. Order only matters when creating the table from scratch.
  */
-const FIELDS = [
+const fieldsFor = (categoriesTableId: string) => [
   { name: "Name", type: "singleLineText" },
   { name: "Date", type: "date", options: { dateFormat: { name: "iso" } } },
   { name: "Authorized Date", type: "date", options: { dateFormat: { name: "iso" } } },
   { name: "Amount", type: "currency", options: { precision: 2, symbol: "$" } },
   { name: "Account", type: "singleLineText" },
-  // Assigned by the rules table; falls back to Plaid's value when nothing matches.
-  { name: "Category", type: "singleLineText" },
+  // Assigned by matching Merchant (Plaid) against the Categories table.
+  {
+    name: CATEGORY_FIELD,
+    type: "multipleRecordLinks",
+    options: { linkedTableId: categoriesTableId },
+  },
   { name: "Category (Plaid)", type: "singleLineText" },
   { name: "Category Detail (Plaid)", type: "singleLineText" },
   { name: "Category Confidence (Plaid)", type: "singleLineText" },
@@ -64,24 +68,28 @@ async function main() {
 
   const { tables } = await listTables(baseId);
 
-  if (!tables.some((t) => t.name === RULES_TABLE)) {
-    const rules = await createTable(baseId, {
-      name: RULES_TABLE,
-      description: "Substring → category. Longest matching Match Text wins.",
+  // Categories must exist first: the Category column links to it.
+  let categories = tables.find((t) => t.name === CATEGORIES_TABLE);
+  if (!categories) {
+    const created = await createTable(baseId, {
+      name: CATEGORIES_TABLE,
+      description: "One row per category. List its merchants, one per line.",
       fields: [
-        { name: MATCH_FIELD, type: "singleLineText" },
-        { name: CATEGORY_FIELD, type: "singleLineText" },
+        { name: NAME_FIELD, type: "singleLineText" },
+        { name: MERCHANTS_FIELD, type: "multilineText" },
       ],
     });
-    console.log(`Created table "${rules.name}" (${rules.id}).`);
+    categories = { ...created, fields: [] };
+    console.log(`Created table "${created.name}" (${created.id}).`);
   }
 
+  const FIELDS = fieldsFor(categories.id);
   const table = tables.find((t) => t.name === TABLE_NAME);
 
   if (!table) {
     const created = await createTable(baseId, {
       name: TABLE_NAME,
-      description: "Credit card transactions synced from Plaid.",
+      description: "Transactions synced from Plaid.",
       fields: FIELDS,
     });
     console.log(`Created table "${created.name}" (${created.id}) with ${FIELDS.length} fields.`);

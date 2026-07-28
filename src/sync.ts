@@ -2,7 +2,13 @@ import type { Transaction } from "plaid";
 import type { AirtableRecord } from "./airtable.js";
 import { deleteRecords, listAllRecords, listTables, upsertRecords } from "./airtable.js";
 import { reportAndExit } from "./plaid.js";
-import { categorize, loadRules, RULES_TABLE, type Rule } from "./rules.js";
+import {
+  CATEGORIES_TABLE,
+  CATEGORY_FIELD,
+  categorize,
+  loadCategories,
+  type CategoryIndex,
+} from "./categories.js";
 import { OVERRIDE_FIELD, TABLE_NAME } from "./setup-airtable.js";
 import { accountLabels, syncTransactions } from "./transactions.js";
 
@@ -31,10 +37,10 @@ function toRecord(
   t: Transaction,
   labels: Map<string, string>,
   protectAmount: boolean,
-  rules: Rule[],
+  index: CategoryIndex,
 ) {
   const category = t.personal_finance_category;
-  const matched = categorize(t.name, t.merchant_name, rules);
+  const matched = categorize(t.merchant_name, t.name, index);
   const fields: Record<string, unknown> = {
       Name: t.name,
       Date: t.date,
@@ -57,10 +63,9 @@ function toRecord(
   // a human's marker, and sync only ever reads it.
   if (!protectAmount) fields[PROTECTED_FIELD] = t.amount;
 
-  // Only write Category when a rule actually matched. Writing a fallback would
-  // overwrite categories set by hand, and Plaid's taxonomy would pollute the
-  // curated single-select options.
-  if (matched) fields.Category = matched.category;
+  // Only write Category on a match. Writing a fallback would overwrite
+  // categories set by hand, and Plaid's taxonomy would pollute the list.
+  if (matched) fields[CATEGORY_FIELD] = [matched.id];
 
   return { fields };
 }
@@ -89,11 +94,24 @@ async function main() {
       .map((r) => r.fields[KEY_FIELD] as string),
   );
 
-  const rulesTable = tables.find((t) => t.name === RULES_TABLE);
-  const rules = rulesTable ? await loadRules(baseId, rulesTable.id) : [];
+  const categoriesTable = tables.find((t) => t.name === CATEGORIES_TABLE);
+  if (!categoriesTable) {
+    throw new Error(`No "${CATEGORIES_TABLE}" table in ${baseId}. Run "npm run setup-airtable".`);
+  }
+
+  // Writing record ids into a single-select would fail confusingly.
+  const categoryField = table.fields.find((f) => f.name === CATEGORY_FIELD);
+  if (categoryField && categoryField.type !== "multipleRecordLinks") {
+    throw new Error(
+      `"${CATEGORY_FIELD}" is a ${categoryField.type}, not a link to "${CATEGORIES_TABLE}". ` +
+        `Convert it in Airtable: field menu → Edit field → Link to another record → ${CATEGORIES_TABLE}.`,
+    );
+  }
+
+  const index = await loadCategories(baseId, categoriesTable.id);
 
   const upserts = [...added, ...modified].map((t) =>
-    toRecord(t, labels, protectedIds.has(t.transaction_id), rules),
+    toRecord(t, labels, protectedIds.has(t.transaction_id), index),
   );
   const { created, updated } = await upsertRecords(baseId, table.id, [KEY_FIELD], upserts);
 
@@ -106,9 +124,11 @@ async function main() {
   console.log(`created ${created} · updated ${updated} · deleted ${deleted}${note}`);
 
   const matched = [...added, ...modified].filter((t) =>
-    categorize(t.name, t.merchant_name, rules),
+    categorize(t.merchant_name, t.name, index),
   ).length;
-  console.log(`${rules.length} rule(s) · matched ${matched}/${upserts.length}`);
+  console.log(
+    `${index.categories} categor(ies) · ${index.merchants} merchant(s) · matched ${matched}/${upserts.length}`,
+  );
 }
 
 /**
