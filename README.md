@@ -38,8 +38,25 @@ what changed. The cursor is only persisted after every page is drained, so an
 interruption replays the batch rather than skipping it.
 
 Airtable writes are upserts keyed on `Transaction ID`, so re-running is
-idempotent. Deletions are real: when a pending charge posts, Plaid removes the
-pending transaction and adds a new one with a different ID.
+idempotent. Deletions are real: any row whose ID Plaid no longer returns is
+removed.
+
+### Pending charges that post
+
+Plaid does not update a pending transaction when it posts. It withdraws it and
+reissues the charge under a **new** ID, naming the old one in
+`pending_transaction_id`.
+
+Taken literally that means delete-and-recreate, which destroys everything
+attached to the row by hand — the receipt, its extracted items, notes,
+category, an amount override. So sync instead rewrites the existing row's
+`Transaction ID` to the posted value before upserting. Same Airtable record,
+so everything hanging off it survives, and reconcile sees it as live. Runs
+report `carried N pending→posted` when this happens.
+
+This assumes `pending_transaction_id` is always populated. If Plaid ever omits
+it, the row reverts to being deleted and recreated, and hand-added data on that
+row is lost.
 
 ## Columns
 

@@ -1,6 +1,12 @@
 import type { Transaction } from "plaid";
 import type { AirtableRecord } from "./airtable.js";
-import { deleteRecords, listAllRecords, listTables, upsertRecords } from "./airtable.js";
+import {
+  deleteRecords,
+  listAllRecords,
+  listTables,
+  updateRecords,
+  upsertRecords,
+} from "./airtable.js";
 import { reportAndExit } from "./plaid.js";
 import {
   CATEGORIES_TABLE,
@@ -83,10 +89,13 @@ async function main() {
   const { added, modified, removed } = await syncTransactions(full ? "full" : "incremental");
   const labels = await accountLabels();
 
-  // One read serves both the override lookup and the delete paths below.
+  // One read serves the carry-forward, the override lookup, and the deletes.
   const hasOverride = table.fields.some((f) => f.name === OVERRIDE_FIELD);
   const columns = hasOverride ? [KEY_FIELD, OVERRIDE_FIELD] : [KEY_FIELD];
   const existing = await listAllRecords(baseId, table.id, columns);
+
+  // Must run before anything keys off Transaction ID — it rewrites those keys.
+  const carried = await carryForwardPending(baseId, table.id, existing, [...added, ...modified]);
 
   const protectedIds = new Set(
     existing
@@ -121,7 +130,8 @@ async function main() {
 
   const held = upserts.length - upserts.filter((u) => PROTECTED_FIELD in u.fields).length;
   const note = held > 0 ? ` · ${PROTECTED_FIELD} held on ${held} (${OVERRIDE_FIELD} set)` : "";
-  console.log(`created ${created} · updated ${updated} · deleted ${deleted}${note}`);
+  const forwarded = carried > 0 ? ` · carried ${carried} pending→posted` : "";
+  console.log(`created ${created} · updated ${updated} · deleted ${deleted}${note}${forwarded}`);
 
   const matched = [...added, ...modified].filter((t) =>
     categorize(t.merchant_name, t.name, index),
@@ -129,6 +139,47 @@ async function main() {
   console.log(
     `${index.categories} categor(ies) · ${index.merchants} merchant(s) · matched ${matched}/${upserts.length}`,
   );
+}
+
+/**
+ * Plaid does not update a pending transaction when it posts. It withdraws it
+ * and reissues the charge under a new id, with `pending_transaction_id` naming
+ * the one it replaced.
+ *
+ * Left alone, reconcile would delete the pending row as stale and the posted
+ * charge would arrive as a fresh record — taking the receipt, notes, category
+ * and item links attached to it. Rewriting the existing row's key instead
+ * carries that record forward, so everything hanging off it survives.
+ */
+async function carryForwardPending(
+  baseId: string,
+  tableId: string,
+  existing: AirtableRecord[],
+  incoming: Transaction[],
+) {
+  const byKey = new Map(existing.map((r) => [r.fields[KEY_FIELD] as string, r]));
+  const updates: Array<{ id: string; fields: Record<string, unknown> }> = [];
+
+  for (const t of incoming) {
+    const pendingId = t.pending_transaction_id;
+    if (!pendingId) continue;
+
+    const row = byKey.get(pendingId);
+    // No row under the old key, or the posted id is already present — either
+    // way there is nothing to carry, and rewriting would duplicate the key.
+    if (!row || byKey.has(t.transaction_id)) continue;
+
+    updates.push({ id: row.id, fields: { [KEY_FIELD]: t.transaction_id } });
+
+    // Keep the in-memory view in step: reconcile reads it, and a row still
+    // holding the withdrawn id would be deleted moments after being carried.
+    row.fields[KEY_FIELD] = t.transaction_id;
+    byKey.delete(pendingId);
+    byKey.set(t.transaction_id, row);
+  }
+
+  if (updates.length > 0) await updateRecords(baseId, tableId, updates);
+  return updates.length;
 }
 
 /**
