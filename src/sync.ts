@@ -91,7 +91,7 @@ async function main() {
 
   // One read serves the carry-forward, the override lookup, and the deletes.
   const hasOverride = table.fields.some((f) => f.name === OVERRIDE_FIELD);
-  const columns = hasOverride ? [KEY_FIELD, OVERRIDE_FIELD] : [KEY_FIELD];
+  const columns = [KEY_FIELD, "Date", "Account", ...(hasOverride ? [OVERRIDE_FIELD] : [])];
   const existing = await listAllRecords(baseId, table.id, columns);
 
   // Must run before anything keys off Transaction ID — it rewrites those keys.
@@ -124,14 +124,25 @@ async function main() {
   );
   const { created, updated } = await upsertRecords(baseId, table.id, [KEY_FIELD], upserts);
 
-  const deleted = full
-    ? await reconcile(baseId, table.id, existing, added)
-    : await deleteByTransactionId(baseId, table.id, existing, removed.map((r) => r.transaction_id));
+  const { deleted, kept } = full
+    ? await reconcile(baseId, table.id, existing, added, labels)
+    : {
+        deleted: await deleteByTransactionId(
+          baseId,
+          table.id,
+          existing,
+          removed.map((r) => r.transaction_id),
+        ),
+        kept: 0,
+      };
 
   const held = upserts.length - upserts.filter((u) => PROTECTED_FIELD in u.fields).length;
   const note = held > 0 ? ` · ${PROTECTED_FIELD} held on ${held} (${OVERRIDE_FIELD} set)` : "";
   const forwarded = carried > 0 ? ` · carried ${carried} pending→posted` : "";
-  console.log(`created ${created} · updated ${updated} · deleted ${deleted}${note}${forwarded}`);
+  const archived = kept > 0 ? ` · kept ${kept} outside Plaid's window` : "";
+  console.log(
+    `created ${created} · updated ${updated} · deleted ${deleted}${note}${forwarded}${archived}`,
+  );
 
   const matched = [...added, ...modified].filter((t) =>
     categorize(t.merchant_name, t.name, index),
@@ -186,26 +197,59 @@ async function carryForwardPending(
  * Full mode gets no `removed` list — Plaid just stops returning the transaction.
  * So drop any synced row Plaid no longer knows about. Rows with a blank key were
  * added by hand in Airtable and are never touched.
+ *
+ * "Plaid no longer knows about it" is not the same as "it did not happen".
+ * Plaid only serves a window, and that window moves: re-linking an Item starts
+ * a fresh ~90 days, and unlinking an account drops its history entirely. A row
+ * from before what Plaid can currently see is not stale — Airtable is the only
+ * copy left — so each account gets a floor at the earliest date it returned,
+ * and nothing below it is deleted.
  */
 async function reconcile(
   baseId: string,
   tableId: string,
   existing: AirtableRecord[],
   current: Transaction[],
+  labels: Map<string, string>,
 ) {
   if (current.length === 0) {
     // Deleting every row because an API hiccup returned nothing is unrecoverable.
     console.warn("Plaid returned no transactions; skipping reconcile rather than emptying the table.");
-    return 0;
+    return { deleted: 0, kept: 0 };
   }
+
   const live = new Set(current.map((t) => t.transaction_id));
-  const stale = existing
-    .filter((r) => {
-      const key = r.fields[KEY_FIELD];
-      return typeof key === "string" && key.length > 0 && !live.has(key);
-    })
-    .map((r) => r.id);
-  return stale.length > 0 ? deleteRecords(baseId, tableId, stale) : 0;
+
+  const floor = new Map<string, string>();
+  for (const t of current) {
+    const account = labels.get(t.account_id) ?? "unknown";
+    const earliest = floor.get(account);
+    if (!earliest || t.date < earliest) floor.set(account, t.date);
+  }
+
+  const stale: string[] = [];
+  let kept = 0;
+
+  for (const record of existing) {
+    const key = record.fields[KEY_FIELD];
+    if (typeof key !== "string" || key.length === 0 || live.has(key)) continue;
+
+    const account = String(record.fields.Account ?? "");
+    const date = String(record.fields.Date ?? "");
+    const earliest = floor.get(account);
+
+    // No floor means the account was not in this sync at all — unlinked, or
+    // renamed. Either way its history is now unreachable and must be kept.
+    // An undated row cannot be placed against the window, so keep that too.
+    if (!earliest || !date || date < earliest) {
+      kept++;
+      continue;
+    }
+    stale.push(record.id);
+  }
+
+  const deleted = stale.length > 0 ? await deleteRecords(baseId, tableId, stale) : 0;
+  return { deleted, kept };
 }
 
 async function deleteByTransactionId(

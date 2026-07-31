@@ -38,8 +38,24 @@ what changed. The cursor is only persisted after every page is drained, so an
 interruption replays the batch rather than skipping it.
 
 Airtable writes are upserts keyed on `Transaction ID`, so re-running is
-idempotent. Deletions are real: any row whose ID Plaid no longer returns is
-removed.
+idempotent.
+
+### History is kept
+
+Plaid serves a moving window, not an archive: re-linking an Item starts a fresh
+~90 days, and unlinking an account drops its history outright. Deleting every
+row Plaid stopped returning would therefore destroy months of data — including
+receipts and hand-categorisation — the first time an Item needed
+re-authentication.
+
+So reconcile gives each account a floor at the earliest date Plaid returned for
+it, and never deletes below that line. A row older than the window is not
+stale; Airtable is the only copy left. Rows on an account Plaid did not return
+at all, and rows with no date, are kept for the same reason. Runs report
+`kept N outside Plaid's window`.
+
+Inside the window, deletion still happens — that is what clears a transaction
+Plaid retracts.
 
 ### Pending charges that post
 
